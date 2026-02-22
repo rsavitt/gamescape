@@ -165,6 +165,150 @@ def render_payoff_table(game: PayoffMatrix, color: bool = True) -> str:
     return f"  {header}\n  {row_c}\n  {row_d}"
 
 
+def _strip_ansi(s: str) -> str:
+    """Remove ANSI escape codes to get visible length."""
+    import re
+    return re.sub(r"\033\[[0-9;]*m", "", s)
+
+
+def _visible_len(s: str) -> str:
+    """Visible character count (ignoring ANSI codes)."""
+    return len(_strip_ansi(s))
+
+
+def _pad_to(s: str, width: int) -> str:
+    """Pad a string (which may contain ANSI codes) to a visible width."""
+    vis = _visible_len(s)
+    if vis >= width:
+        return s
+    return s + " " * (width - vis)
+
+
+def render_compact(name: str, game: PayoffMatrix, flow_width: int = 30,
+                   traj_width: int = 30, traj_height: int = 12,
+                   color: bool = True) -> list[str]:
+    """Render a compact single-column card for one game. Returns list of lines."""
+    fps = find_fixed_points(game)
+    classification = classify_game(game)
+
+    lines: list[str] = []
+
+    # Title bar
+    if color:
+        lines.append(f"{BOLD}{CYAN}{'=' * 34}{RESET}")
+        lines.append(f"{BOLD}{CYAN} {name:^32s} {RESET}")
+        lines.append(f"{BOLD}{CYAN}{'=' * 34}{RESET}")
+    else:
+        lines.append("=" * 34)
+        lines.append(f" {name:^32s} ")
+        lines.append("=" * 34)
+
+    # Payoff matrix (compact)
+    lines.append(f"       {'C':>6s}{'D':>6s}")
+    if color:
+        lines.append(f"   C  {GREEN}{game.a:>6.0f}{RESET}{RED}{game.b:>6.0f}{RESET}")
+        lines.append(f"   D  {YELLOW}{game.c:>6.0f}{RESET}{BLUE}{game.d:>6.0f}{RESET}")
+    else:
+        lines.append(f"   C  {game.a:>6.0f}{game.b:>6.0f}")
+        lines.append(f"   D  {game.c:>6.0f}{game.d:>6.0f}")
+
+    # Classification
+    if color:
+        lines.append(f" {BOLD}Type:{RESET} {YELLOW}{classification}{RESET}")
+    else:
+        lines.append(f" Type: {classification}")
+
+    # Fixed points
+    for fp in fps:
+        marker = "@" if fp.stable else "o"
+        stab = "stable" if fp.stable else "unstable"
+        if color:
+            sc = GREEN if fp.stable else RED
+            lines.append(f"  {sc}{marker}{RESET} x={fp.x:.3f} {fp.label} {sc}{stab}{RESET}")
+        else:
+            lines.append(f"  {marker} x={fp.x:.3f} {fp.label} {stab}")
+
+    # Flow line
+    flow = render_flow_line(game, width=flow_width, color=color)
+    # Strip the "  all-D |..| all-C" wrapper for compact version
+    lines.append(f" D|{flow.split('|')[1]}|C")
+
+    # Mini trajectory plot
+    x0_values = [0.1, 0.3, 0.5, 0.7, 0.9]
+    trajectories = [trajectory(game, x0, steps=200) for x0 in x0_values]
+    max_t = max(len(t) for t in trajectories)
+    symbols = [".", ":", "~", "#", "^"]
+
+    grid = [[" " for _ in range(traj_width)] for _ in range(traj_height)]
+    for idx, traj in enumerate(trajectories):
+        sym = symbols[idx % len(symbols)]
+        for t_idx, x_val in enumerate(traj):
+            col = int(t_idx / max_t * (traj_width - 1))
+            row = traj_height - 1 - int(x_val * (traj_height - 1))
+            row = max(0, min(traj_height - 1, row))
+            col = max(0, min(traj_width - 1, col))
+            grid[row][col] = sym
+
+    traj_colors = [CYAN, GREEN, YELLOW, MAGENTA, RED]
+    lines.append(f" {'─' * (traj_width + 2)}")
+    for r in range(traj_height):
+        label = f"{1.0 - r / (traj_height - 1):.1f}" if r % 3 == 0 else "   "
+        row_str = "".join(grid[r])
+        if color:
+            colored = []
+            for ch in row_str:
+                if ch in symbols:
+                    c = traj_colors[symbols.index(ch) % len(traj_colors)]
+                    colored.append(f"{c}{ch}{RESET}")
+                else:
+                    colored.append(ch)
+            row_str = "".join(colored)
+        lines.append(f"{label}|{row_str}|")
+    lines.append(f" {'─' * (traj_width + 2)}")
+
+    return lines
+
+
+def render_comparison(games: dict[str, PayoffMatrix], color: bool = True) -> str:
+    """Render multiple games side by side in compact columns."""
+    # Render each game as a list of lines
+    columns: list[list[str]] = []
+    for name, game in games.items():
+        col = render_compact(name, game, color=color)
+        columns.append(col)
+
+    # Pad all columns to same height
+    max_height = max(len(c) for c in columns)
+    for col in columns:
+        while len(col) < max_height:
+            col.append("")
+
+    # Determine column width (visible chars) — use widest line per column
+    col_widths = []
+    for col in columns:
+        w = max(_visible_len(line) for line in col)
+        col_widths.append(w)
+
+    # Join columns side by side with separator
+    sep = "  "
+    output_lines: list[str] = []
+    for row_idx in range(max_height):
+        parts = []
+        for col_idx, col in enumerate(columns):
+            line = col[row_idx] if row_idx < len(col) else ""
+            parts.append(_pad_to(line, col_widths[col_idx]))
+        output_lines.append(sep.join(parts))
+
+    # Header
+    header = ""
+    if color:
+        header = f"\n{BOLD}  Evolutionary Game Theory — All Classic 2x2 Games{RESET}\n"
+    else:
+        header = "\n  Evolutionary Game Theory — All Classic 2x2 Games\n"
+
+    return header + "\n".join(output_lines) + "\n"
+
+
 def render_analysis(game: PayoffMatrix, color: bool = True) -> str:
     """Full analysis output."""
     fps = find_fixed_points(game)

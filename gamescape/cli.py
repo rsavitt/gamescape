@@ -6,7 +6,7 @@ import argparse
 import sys
 
 from gamescape.dynamics import PayoffMatrix, CLASSIC_GAMES
-from gamescape.render import render_analysis
+from gamescape.render import render_analysis, render_comparison
 
 
 def parse_matrix(s: str) -> PayoffMatrix:
@@ -55,8 +55,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="List available classic games",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Show all 5 classic games side by side",
+    )
 
     args = parser.parse_args(argv)
+
+    if args.all:
+        output = render_comparison(CLASSIC_GAMES, color=not args.no_color)
+        print(output)
+        return
 
     if args.list:
         print("\nAvailable classic games:")
